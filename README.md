@@ -1,532 +1,98 @@
 # QuantEngine
 
-[![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg?logo=c%2B%2B)](https://en.cppreference.com/w/cpp/20)
-[![CMake](https://img.shields.io/badge/CMake-3.28%2B-064F8C.svg?logo=cmake)](https://cmake.org/)
-[![Linux x86_64](https://img.shields.io/badge/Platform-Linux%20x86__64-FCC624.svg?logo=linux)](https://kernel.org/)
-[![Tests Passing](https://img.shields.io/badge/Tests-248%2F248%20Passing-brightgreen.svg)]()
-[![Sanitizers Clean](https://img.shields.io/badge/ASan%20%2F%20UBSan-Clean-success.svg)]()
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg?logo=python)](https://www.python.org/)
-[![License](https://img.shields.io/badge/License-MIT%20%2F%20Academic-lightgrey.svg)](LICENSE)
+<div align="center">
 
-> **Deterministic, High-Performance C++20 Electronic Trading Platform, Matching Core & Queue-Position-Aware Historical L3 Execution Simulator**
+[![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg?logo=cplusplus)](https://en.cppreference.com/w/cpp/20)
+[![CMake](https://img.shields.io/badge/CMake-3.28%2B-blue.svg?logo=cmake)](https://cmake.org/)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-red.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![Build](https://github.com/shubham-dataeng/QuantEngine/actions/workflows/ci.yml/badge.svg)](https://github.com/shubham-dataeng/QuantEngine/actions/workflows/ci.yml)
+[![Wheels](https://github.com/shubham-dataeng/QuantEngine/actions/workflows/build-wheels.yml/badge.svg)](https://github.com/shubham-dataeng/QuantEngine/actions/workflows/build-wheels.yml)
+[![Tests](https://img.shields.io/badge/tests-248%20passing-brightgreen.svg)](#)
+[![Python](https://img.shields.io/badge/Python-3.9%20|%203.10%20|%203.11%20|%203.12-blue.svg?logo=python)](https://pypi.org/project/quantengine/)
 
-QuantEngine is a high-integrity, cache-conscious electronic trading platform, limit order matching engine, and market replay simulator engineered from first principles in modern C++20. Designed for quantitative trading desks, high-frequency execution researchers, and systems engineers, QuantEngine pairs bit-level determinism with zero-allocation memory pools to deliver **over 11.7 million operations per second** with **84.8 nanosecond mean latency** on commodity x86-64 hardware, alongside a **7.08+ Mevents/s Historical L3 Market Replay & Execution Simulation pipeline**.
+**A production-grade, deterministic C++20 Limit Order Book matching engine with a Binance-compatible REST + WebSocket exchange API.**
 
-Beyond a standalone matching core, QuantEngine provides a complete, production-structured quantitative infrastructure stack: dual-engine matching cores with continuous property-based differential fuzzing, an order-granularity 64-bit FNV-1a canonical state hashing engine, queue-position tracking with cancel-attribution modeling, a 4-stage virtual time latency pipeline, a 5-tier pre-trade risk hierarchy with intraday high-water mark circuit breaking, average-cost portfolio accounting, an in-flight 9-state order lifecycle machine, asynchronous binary event journaling, and native Python bindings releasing the GIL for 1.84+ Mops/s batch ingestion.
+[Getting Started](#getting-started) · [Architecture](#architecture) · [Exchange API](#exchange-api-server) · [L3 Historical Replay](#l3-historical-replay) · [Benchmarks](#benchmarks) · [Commercial License](#commercial-licensing)
 
----
-
-## Why Determinism Matters in Quantitative Finance
-
-In electronic trading and quantitative research, **non-determinism is the silent killer of alpha**. 
-
-When backtesting execution algorithms, conventional simulators frequently rely on system wall-clock calls (`std::chrono::system_clock::now()`), OS thread sleeps (`std::this_thread::sleep_for`), non-deterministic hash maps (`std::unordered_map`), or simplified top-of-book assumptions (L1/L2). These introduce insidious flaws:
-
-1. **Backtest Overfitting & Phantom Fills**: Assuming instantaneous fills at the top-of-book or relying on random Poisson fills ignores order queue priority. A strategy that looks profitable on paper often fails in production because it never reaches the front of the queue.
-2. **Heisenbugs & Non-Reproducible Research**: When two runs of the same backtest produce differing fills, trade counts, or P&L due to OS thread preemption or non-deterministic iteration order, quantitative researchers cannot distinguish genuine statistical alpha from simulation noise.
-3. **Execution-Simulation Divergence**: Backtests that cannot track order cancellation ahead of your position or fail to account for wire latencies ($t_{\text{feed}}$, $t_{\text{entry}}$, $t_{\text{resp}}$) systematically underestimate adverse selection.
-
-**QuantEngine solves this by design:**
-* **Virtual Event Clock**: Physical wall-clock time is completely banished from engine decision logic. Time advances monotonically and discretely via incoming event timestamps.
-* **Separation of History & Strategy**: Historical market feeds represent real venue participants and are never corrupted or mutated by simulated participant orders.
-* **Queue-Position Tracking**: Passive limit orders capture the exact volume resting ahead at level entry, accurately depleting queue-ahead upon historical executions and ahead-cancellations.
-* **64-Bit Canonical FNV-1a State Hashing**: The entire engine and historical book state can be verified at any tick. Replaying identical input datasets with identical configs on different machines produces **byte-for-byte identical state hashes, trade logs, and portfolio P&L ledgers**.
+</div>
 
 ---
 
-## Technical Highlights
+## Why Determinism Matters
 
-| Dimension | Measured / Specified | Architectural Guarantee |
-| :--- | :---: | :--- |
-| **Peak Matching Throughput** | **11.79 Mops/s** (Balanced)<br>**15.14 Mops/s** (Crossing) | Contiguous arena allocation; $O(1)$ intrusive price queue operations |
-| **Matching Engine Latency** | **84.8 ns** mean &middot; **90 ns** p50<br>**281 ns** p99 &middot; **441 ns** p99.9 | Zero runtime dynamic heap allocations (`malloc`/`new`) on the hot matching path |
-| **Tail Latency Reduction** | **6.1x lower p99** vs STL<br>(331 ns vs 2,038 ns in Add-Heavy) | Eliminates memory fragmentation, allocator locks, and OS page faults |
-| **Historical L3 Tape Ingestion**| **14.51 Mlines/s** (68.9 ns/line) | Zero-copy `std::string_view` line tokenization and fast integer conversion |
-| **L3 Book Reconstruction** | **7.08 Mevents/s** (100k events)<br>**4.14 Mevents/s** (1M events) | Full price/time priority rebuild, aggregate depth ladder, and canonical hashing |
-| **Full Replay Sim Pipeline** | **7.15 Mevents/s** (100k scale)<br>**2.82 Mevents/s** (1M scale) | Replay + queue tracking + virtual latency + participant fills + AVCO portfolio |
-| **Determinism** | **Bit-for-Bit Identical** across runs | Eliminates wall-clock time; validated via 64-bit FNV-1a canonical state hashes |
-| **Memory Footprint** | **72-byte `OrderNode`** &middot; **64-byte `Quote`** | Compile-time `static_assert` layout verification; 65k orders fit inside CPU L3 cache |
-| **Test Verification** | **248 / 248 Tests Passing** (Release)<br>**248 / 248 Sanitizer Tests Clean** | Zero memory leaks, zero undefined behavior, zero data races under ASan / UBSan |
-| **Pre-Trade Risk Gate** | **5-Tier Pre-Trade Hierarchy** | 8-byte `RiskVerdict`; sub-nanosecond order rejection; drawdown circuit breaker |
-| **Order Lifecycle** | **9-State Finite State Machine** | Formal lifecycle transitions; Client Order ID to Venue Order ID two-way reconciliation |
-| **Event Persistence** | **Binary QEVJ v1 Journal + Async Worker** | 32-byte header, FNV-1a frame checksums, non-blocking lock-free/mutex ring buffer |
-| **Python Batch Ingestion** | **1.84+ Mops/s** | Pybind11 C++ bindings releasing the Python GIL for multi-threaded quantitative pipelines |
+Most backtesting frameworks treat order execution as a black box. They assume fills happen at the quoted price, ignore queue position, and cannot reproduce a historical book state bit-for-bit.
+
+QuantEngine takes a different approach:
+
+- **Zero-allocation hot path.** The `OptimizedOrderBook` uses a 65,536-slot arena (`OrderPool`) with 32-bit intrusive doubly-linked lists and a flat hash map for price levels. The matching loop does not touch the heap.
+- **Canonical binary state hash.** After every event, a 64-bit FNV-1a hash over the serialised book state produces a single integer. Two engines that process the same command log **must** produce the same hash — this is enforced by a cross-engine invariant test on every CI push.
+- **L3 event-time replay.** The historical replay subsystem reconstructs the full exchange book from raw L3 tick data (ADD / CANCEL / EXECUTE / MODIFY), tracks FIFO queue position for each resting order, and simulates virtual latency for your strategy's observation, decision, and submission paths.
+- **Full exchange API.** The `server.py` FastAPI layer wraps the C++ engine in a Binance-compatible REST + WebSocket server. Point your existing trading bot at `localhost:8080` and it will not know the difference.
 
 ---
 
-## Historical L3 Market Replay & Execution Simulation Architecture
+## Architecture
 
-The Historical Level 3 (MBO - Market By Order) simulation engine reconstructs market depth tick-by-tick, tracks the exact queue position of simulated orders, enforces deterministic 4-stage virtual latency, and routes fills to the portfolio ledger:
+### Core Matching Engine
+
+```mermaid
+flowchart LR
+    subgraph C++20 Core
+        OC[OrderCommand\nCreateOrderCommand\nCancelOrderCommand\nModifyOrderCommand]
+        GME[GenericMatchingEngine\ntemplate BookType]
+        OOB[OptimizedOrderBook\nArena Pool · Intrusive Lists\nFlat HashMap]
+        ROB[ReferenceOrderBook\nstd::map · std::list\nGround Truth Oracle]
+        PORT[Portfolio\nAVCO Accounting\nRealised P&L]
+    end
+
+    OC --> GME
+    GME --> OOB
+    GME --> ROB
+    GME -->|ExecutionReport + Trades| PORT
+```
+
+### L3 Historical Replay Pipeline
+
+```mermaid
+flowchart LR
+    CSV[L3 CSV Tick Data\nADD · CANCEL\nEXECUTE · MODIFY]
+    PARSER[L3CsvParser\nCanonical Events]
+    BOOK[HistoricalL3Book\nPrice/Time Priority\nRemaining Quantities]
+    QUEUE[FifoQueueModel\nQueue-Ahead Tracking\nDeterministic Position]
+    CLOCK[EventClock\nVirtual Nanoseconds]
+    LATENCY[LatencyModel\nFeed · Decision\nEntry · Response]
+    GATEWAY[ReplayGateway\nExecution Simulator]
+    STRATEGY[Strategy\nObservation → Signal]
+    PORTFOLIO[Portfolio\nP&L · AVCO]
+    HASH[Canonical Hash\n64-bit FNV-1a]
+
+    CSV --> PARSER
+    PARSER --> BOOK
+    BOOK --> QUEUE
+    QUEUE --> CLOCK
+    CLOCK --> LATENCY
+    LATENCY --> GATEWAY
+    GATEWAY --> STRATEGY
+    STRATEGY -->|Orders| GATEWAY
+    GATEWAY --> PORTFOLIO
+    PORTFOLIO --> HASH
+```
+
+### Exchange API Layer
 
 ```mermaid
 flowchart TD
-    subgraph Ingestion ["1. Historical Ingestion Layer"]
-        CSV["Historical L3 Market Tape (CSV / Binary)"]
-        Parser["L3CsvParser (Fast string_view Tokenizer)"]
-        Adversary["Adversarial Error Filter & Validator"]
-        CSV --> Parser --> Adversary
-    end
-
-    subgraph Canonical ["2. Canonical L3 Events (L3Message)"]
-        A["OrderAdded (New Resting Liquidity)"]
-        E["OrderExecuted (Level Liquidity Match)"]
-        C["OrderCancelled (Liquidity Reduction)"]
-        R["OrderReplaced (Price/Qty Priority Reset)"]
-        T["TradeMessage (Off-Book / Crossing Print)"]
-        Adversary --> A & E & C & R & T
-    end
-
-    subgraph Timeline ["3. Deterministic Virtual Timeline"]
-        Clock["EventClock (Monotonic Virtual Time)"]
-        PQ["VirtualTimeline (Priority Queue)"]
-        Lat["LatencyModel (t_feed, t_decision, t_entry, t_resp)"]
-        A & E & C & R & T --> PQ
-        Clock -.-> PQ
-        Lat -.-> PQ
-    end
-
-    subgraph ReplayCore ["4. Replay Core & Execution Gateway"]
-        Book["HistoricalL3Book (Reconstruction & Canonical Hash)"]
-        Tracker["QueuePositionTracker (Level Queue Queues)"]
-        Fifo["FifoQueueModel (Queue-Ahead Depletion)"]
-        Gateway["ReplayGateway (Aggressive Sweeps & Passive Fills)"]
-        
-        PQ --> Book
-        Book <--> Tracker
-        Tracker <--> Fifo
-        Gateway <--> Book
-        Gateway <--> Tracker
-    end
-
-    subgraph StrategyLayer ["5. Quantitative Alpha & Portfolio Accounting"]
-        Strat["Quantitative Strategy (IStrategy / Market Maker)"]
-        Port["Portfolio Ledger (AVCO Inventory, Cash, Realized PnL)"]
-        
-        PQ --> Strat
-        Strat --> Gateway
-        Gateway --> Port
-    end
-```
-
-### 1. Canonical L3 Market Events (`L3Message`)
-Exchange market-by-order feeds broadcast discrete lifecycle messages. QuantEngine normalizes these into strongly typed, 64-bit aligned structures encapsulated in a zero-allocation `std::variant`:
-* `OrderAdded`: New resting limit order placed at an exchange venue with a unique `VenueOrderId`, side, price ticks, and quantity.
-* `OrderExecuted`: Execution of an existing resting order, reducing its remaining quantity.
-* `OrderCancelled`: Cancellation or reduction of a resting order.
-* `OrderReplaced`: Venue order modification atomically altering price or quantity (resets time priority in FIFO queues).
-* `TradeMessage`: Off-book, non-displayed, or crossed trade execution report carrying price, quantity, and market condition flags.
-
-### 2. Deterministic Book Reconstruction (`HistoricalL3Book`)
-* **Price/Time Priority**: Tracks all resting orders across price levels in strictly sorted `std::map<PriceTicks, ...>` queues.
-* **Volume Aggregation**: Dynamically maintains aggregate bid/ask depth ladders with zero dynamic allocation on updates.
-* **Invariant Auditing**: Validates continuous volume conservation and uncrossed spread states across every historical tick.
-* **Canonical State Hash**: Computes an order-granularity 64-bit FNV-1a hash across the entire active historical book for bit-exact verification across different machines.
-
-### 3. Queue-Position-Aware Fill Modeling (`QueuePositionTracker`)
-When a quantitative strategy places a passive limit order at the inside market, it does not receive an instantaneous fill. Instead, it enters the queue behind existing resting liquidity:
-* **Level Queue Ahead**: Upon placement at price level $P$, the simulator captures the total resting volume ahead of the participant order:
-  $$Q_{\text{ahead}}(t_0) = \sum_{i \in \text{OrdersAhead}} Q_i(t_0)$$
-* **Historical Execution Depletion**: As historical `OrderExecuted` events arrive at price $P$, they deplete the queue ahead:
-  $$Q_{\text{ahead}}(t + 1) = \max(0, \; Q_{\text{ahead}}(t) - Q_{\text{exec}})$$
-* **Historical Cancellation Attribution**: Cancellations occurring at the price level are disambiguated:
-  - If the cancelled order arrived *before* our order, $Q_{\text{ahead}}$ is decremented.
-  - If the cancelled order arrived *after* our order, $Q_{\text{ahead}}$ is unaffected.
-* **Participant Execution**: Once $Q_{\text{ahead}} == 0$, subsequent historical executions at price $P$ fill the participant's order up to available execution size.
-* **Immediate Trade-Through**: If an execution occurs at a price strictly through our limit order ($P_{\text{exec}} > P_{\text{ask}}$ or $P_{\text{exec}} < P_{\text{bid}}$), all queue ahead is exhausted and the order fills immediately.
-
-### 4. Virtual Time & 4-Stage Latency Pipeline
-Wall-clock calls (`std::chrono::system_clock::now()`) introduce non-deterministic OS thread scheduling delays into backtests. QuantEngine eliminates all physical sleeps:
-* **`EventClock`**: An explicit, monotonically advancing virtual clock driven strictly by event timestamps.
-* **`LatencyModel`**: Configurable microsecond/nanosecond network and compute pipeline latencies:
-  1. $t_{\text{feed}}$: Wire delay from the exchange to the strategy observation point.
-  2. $t_{\text{decision}}$: Internal strategy compute delay to generate an `OrderRequest`.
-  3. $t_{\text{entry}}$: Inbound network wire delay from the trading server to the exchange gateway.
-  4. $t_{\text{response}}$: Outbound execution confirmation return wire delay.
-* **`VirtualTimeline`**: A discrete-event priority queue that serializes and interleaves market events, order arrivals, and simulated fill notices in exact chronological sequence.
-
----
-
-## Scientific Honesty: Defensible Assumptions & Simulation Limitations
-
-A quantitative simulation model is only as credible as the researcher's awareness of its structural limitations. To maintain rigorous institutional standards, QuantEngine explicitly documents where historical simulation diverges from live exchange microstructure:
-
-1. **Non-Displayed & Iceberg Liquidity**:
-   Exchanges (e.g., NASDAQ, BATS, CME) support hidden limit orders and discretionary reserve (iceberg) orders. These orders do not broadcast `OrderAdded` messages on lit L3 feeds. In historical data, executions can occur against non-displayed volume, creating apparent "phantom" matches. QuantEngine correctly attributes execution quantity to level queue depletion, but cannot infer non-displayed order queues prior to execution.
-2. **Off-Exchange Internalization & PFOF**:
-   In US equity markets, over 40% of overall share volume—and a vast majority of marketable retail flow—is internalized off-exchange by wholesale market makers (Citadel Securities, Virtu, Jane Street) or routed through Alternative Trading Systems (ATS / dark pools) under Payment for Order Flow (PFOF). Simulated orders interacting strictly with lit exchange L3 data do not capture dark pool mid-point crosses or retail internalization skimming.
-3. **Exogenous Market Feed & Adverse Selection (Market Impact)**:
-   The simulator treats the historical event stream as an exogenous environment: historical participants do not cancel, modify, or add orders in reaction to the presence of the simulated strategy's orders. In reality, large resting participant orders discourage opposing aggressive liquidity, while aggressive sweeps cause market impact. Furthermore, passive fills in backtesting are subject to **adverse selection**: resting quotes are most likely to be filled precisely when toxic flow is informed and about to breach the price level.
-4. **Deterministic vs. Stochastic Wire Jitter**:
-   While `LatencyModel` accurately accounts for constant or symmetric transit delays, real-world network interfaces experience queueing delays, operating system scheduling interrupts, TCP ACK delays, and microburst switch contention that produce heavy-tailed stochastic latency distributions.
-5. **Exchange Core Serialization Micro-Races**:
-   When a participant's cancel request races against an incoming aggressive market sweep arriving at nearly the exact same timestamp, the physical outcome is decided by the nanosecond serialization order on the exchange matching engine's CPU core. Virtual time models resolve races deterministically according to event priority timestamps.
-
----
-
-## Performance Benchmarks
-
-All microbenchmarks are measured empirically via **Google Benchmark v1.8.3** with compiler optimization `-O3 -DNDEBUG -std=c++20`. Workload command streams are generated offline using deterministic pseudo-random seeds to eliminate PRNG overhead from the measurement loop.
-
-### Hardware Testbed Specifications
-* **CPU**: AMD Ryzen 7 7840HS (Zen 4 architecture, 8 cores / 16 threads @ 5.14 GHz max clock)
-* **Caches**: L1 Data: 32 KiB/core &middot; L2: 1024 KiB/core &middot; L3: 16 MiB shared
-* **Memory**: 16 GiB DDR5
-* **OS / Compiler**: Ubuntu 24.04 LTS (Linux kernel 6.8.0, x86_64) &middot; GCC 13.3.0
-
-### 1. Historical L3 Market Replay & Execution Simulation Benchmarks
-Target: `quantengine_bench_l3` (derived from realistic market-by-order event streams):
-
-| Benchmark Pipeline | Workload Scale | Measured Time | Throughput | Mean Latency / Op |
-| :--- | :---: | :---: | :---: | :---: |
-| **`BM_L3CsvParser_ParseLine`** | 10k Line Batch | 0.689 ms | **14.51 Mlines/s** | **68.9 ns** / line |
-| **`BM_HistoricalL3Book_Reconstruction_100k`** | 100,000 Events | 14.1 ms | **7.08 Mevents/s** | **141.2 ns** / event |
-| **`BM_HistoricalL3Book_Reconstruction_1M`** | 1,000,000 Events | 242.0 ms | **4.14 Mevents/s** | **241.7 ns** / event |
-| **`BM_FullReplay_Pipeline_100k`** | 100k Events + Fills | 14.0 ms | **7.15 Mevents/s** | **139.9 ns** / event |
-| **`BM_FullReplay_Pipeline_1M`** | 1,000,000 Events + Fills | 354.0 ms | **2.82 Mevents/s** | **354.2 ns** / event |
-
-### 2. Core Limit Order Matching Engine Throughput (Batched Operations)
-Target: `quantengine_benchmarks`:
-
-| Workload Profile | Engine Variant | Time / 50k Batch | Peak Throughput | Mean Latency | Speedup |
-| :--- | :--- | :---: | :---: | :---: | :---: |
-| **Balanced** (50% Add, 25% Cxl, 25% Trade) | Reference | 4.69 ms | 10.65 Mops/s | 93.9 ns | 1.00x |
-| **Balanced** | **Optimized** | **4.24 ms** | **11.79 Mops/s** | **84.8 ns** | **1.11x** |
-| **Add-Heavy** (90% Add, 10% Cxl) | Reference | 7.64 ms | 6.55 Mops/s | 152.7 ns | 1.00x |
-| **Add-Heavy** | **Optimized** | **4.59 ms** | **10.91 Mops/s** | **91.7 ns** | **1.67x** |
-| **Crossing-Heavy** (30% Add, 70% Sweep Match) | Reference | 3.57 ms | 14.02 Mops/s | 71.3 ns | 1.00x |
-| **Crossing-Heavy** | **Optimized** | **3.30 ms** | **15.14 Mops/s** | **66.0 ns** | **1.08x** |
-| **Cancel-Heavy** (50% Add, 50% Cxl) | Reference | 4.56 ms | 10.96 Mops/s | 91.2 ns | 1.00x |
-| **Cancel-Heavy** | **Optimized** | **4.41 ms** | **11.33 Mops/s** | **88.2 ns** | **1.03x** |
-
-### 3. Matching Tail Latency Percentiles (Per-Operation Microbenchmarks)
-
-| Workload Profile | Engine Variant | Median (p50) | 90th % (p90) | 99th % (p99) | 99.9th % (p99.9) | Max Latency |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Balanced** | Reference | 141 ns | 362 ns | 854 ns | 1,807 ns | 43,640 ns |
-| **Balanced** | **Optimized** | **90 ns** | **151 ns** | **281 ns** | **441 ns** | **36,452 ns** |
-| **Add-Heavy** | Reference | 101 ns | 602 ns | 2,038 ns | 3,976 ns | 37,265 ns |
-| **Add-Heavy** | **Optimized** | **81 ns** | **140 ns** | **331 ns** | **532 ns** | **5,069 ns** |
-| **Crossing-Heavy** | Reference | 70 ns | 121 ns | 401 ns | 652 ns | 23,903 ns |
-| **Crossing-Heavy** | **Optimized** | **70 ns** | **120 ns** | **392 ns** | **692 ns** | **42,867 ns** |
-| **Cancel-Heavy** | Reference | 100 ns | 141 ns | 191 ns | 361 ns | 7,540 ns |
-| **Cancel-Heavy** | **Optimized** | **100 ns** | **140 ns** | **171 ns** | **231 ns** | **30,649 ns** |
-
-> **Architectural Takeaway**: Notice the **331 ns vs 2,038 ns p99 latency** on Add-Heavy workloads (**6.1x tail latency reduction**). While standard library heap containers allocate dynamic nodes through glibc `malloc` on every single passive order addition, `OptimizedOrderBook` retrieves pre-allocated slots from a contiguous arena pool in $O(1)$ time, eliminating OS page faults and allocator lock contention.
-
----
-
-## Memory Layout & Cache Verification
-
-QuantEngine enforces strict memory compactness and cache-line alignment using compile-time `static_assert` layout guards across all core structures:
-
-```
-                  64-byte Hardware Cache Line Boundary
-+-------------------------------------------------------------------+
-| core::Order (56 Bytes)                             | Padding (8B) |
-+-------------------------------------------------------------------+
-| market::Quote (64 Bytes) - Exact Single Cache Line                |
-+-------------------------------------------------------------------+
-| optimized::OrderNode (72 Bytes)                     | Prev/Next/InUse
-+-------------------------------------------------------------------+
-```
-
-| Structure | Size | Alignment | Purpose & Optimization Details |
-| :--- | :---: | :---: | :--- |
-| `core::Order` | **56 B** | 8 B | Compact scalar layout: `OrderId(8)`, `Side(1)+7pad`, `PriceTicks(8)`, `InitQty(8)`, `RemQty(8)`, `Seq(8)`, `Status(1)+7pad` |
-| `optimized::OrderNode` | **72 B** | 8 B | Intrusive pool node: `core::Order(56)` + `prev(4)` + `next(4)` + `in_use(1)+7pad`. Fits ~0.89 nodes per 64B cache line |
-| `market::Tick` | **56 B** | 8 B | Trade execution tick: `Timestamp(8)`, `Symbol(8)`, `Price(8)`, `Size(8)`, `Seq(8)`, `Side(1)+7pad` |
-| `market::Quote` | **64 B** | 8 B | **Exact 64-byte cache line fit**: `Timestamp(8)`, `Symbol(8)`, `BidPrice(8)`, `BidSize(8)`, `AskPrice(8)`, `AskSize(8)`, `Seq(8)` |
-| `market::MarketTrade` | **56 B** | 8 B | Normalized execution report from external venues |
-| `replay::OrderAdded` | **48 B** | 8 B | L3 Add message: `exchange_ts(8)`, `venue_order_id(8)`, `symbol(8)`, `price(8)`, `quantity(8)`, `side(1)+7pad` |
-| `replay::OrderExecuted`| **40 B** | 8 B | L3 Match message: `exchange_ts(8)`, `venue_order_id(8)`, `symbol(8)`, `executed_qty(8)`, `match_number(8)` |
-| `replay::OrderCancelled`| **32 B** | 8 B | L3 Cancel message: `exchange_ts(8)`, `venue_order_id(8)`, `symbol(8)`, `cancelled_qty(8)` |
-| `execution::OrderRequest`| **48 B** | 8 B | Outbound order instruction: `ClientOrderId(8)`, `Symbol(8)`, `Price(8)`, `Quantity(8)`, `Side(1)`, `Type(1)`, `TIF(1)+5pad` |
-| `execution::OrderAck` | **16 B** | 8 B | Low-overhead gateway response: `ClientOrderId(8)`, `VenueOrderId(8)` |
-| `risk::RiskVerdict` | **8 B** | 8 B | Bit-packed pre-trade decision: `Allowed(bool, 1)`, `RejectReason(1)+6pad` |
-| `risk::PortfolioView` | **40 B** | 8 B | Zero-allocation portfolio snapshot for sub-nanosecond risk calculations |
-| `journal::JournalHeader` | **32 B** | 8 B | QEVJ v1 file header: Magic `0x5145564A`, version, flags, reserved words |
-| `journal::RecordEnvelope`| **28 B** | 4 B | Framed event envelope: `RecordType(1)`, `Length(3)`, `Timestamp(8)`, `FNV-1a Checksum(8)`, `Seq(8)` |
-
----
-
-## Dual-Engine Core Design
-
-To guarantee both maximum mechanical efficiency and provable algorithmic correctness, QuantEngine implements two independent order book implementations behind a unified compile-time interface:
-
-```mermaid
-flowchart TD
-    subgraph Client ["Client Ingestion Layer"]
-        CLI["CLI Tool / ASCII Ladder"]
-        CPP["C++20 Engine API"]
-        PY["Pybind11 Python / Batch API"]
-    end
-
-    CLI --> Engine
-    CPP --> Engine
-    PY --> Engine
-
-    subgraph Engine ["GenericMatchingEngine<BookType>"]
-        GME["Continuous Price-Time Matching Loop<br/>Maker Price Priority & Crossing Guards"]
-    end
-
-    Engine --> RefBook
-    Engine --> OptBook
-
-    subgraph RefBook ["ReferenceOrderBook (Ground Truth)"]
-        R1["std::map<PriceTicks, std::list<Order>>"]
-        R2["std::unordered_map<OrderId, ListIterator>"]
-        R3["Standard Library Heap Allocations"]
-        R4["Focus: Algorithmic Clarity & Specification Baseline"]
-    end
-
-    subgraph OptBook ["OptimizedOrderBook (Zero-Allocation)"]
-        O1["Flat Hash Map for Price Levels"]
-        O2["Contiguous OrderPool (Free-List Recycled)"]
-        O3["32-Bit Intrusive Doubly-Linked Node Indices"]
-        O4["Focus: Cache Locality & Sub-100ns Tail Latency"]
-    end
-
-    RefBook --> Auditor
-    OptBook --> Auditor
-
-    subgraph Auditor ["Audit, Verification & Replay"]
-        DIFF["Property-Based Differential Fuzzer"]
-        HASH["64-Bit FNV-1a Canonical State Hash"]
-        INVAR["Continuous Invariant Auditor (Uncrossed, Volume, Pool)"]
-    end
-```
-
-### 1. `ReferenceOrderBook` (Ground-Truth Baseline)
-* **Data Structures**: `std::map<PriceTicks, std::list<core::Order>>` for sorted price levels and FIFO time priority queues; `std::unordered_map<OrderId, OrderLocation>` for $O(1)$ order lookups.
-* **Role**: Acts as the formal mathematical specification. Intentionally written with standard library containers to serve as an unoptimized, trustworthy oracle for differential testing.
-
-### 2. `OptimizedOrderBook` (Zero-Allocation Production Core)
-* **Contiguous Memory Arena (`OrderPool`)**: Preallocates a contiguous block of nodes (default 65,536) managed via a free-list index stack. Adding and removing orders performs $O(1)$ slot index pops and pushes with **zero heap allocations (`malloc`/`new`) on the hot path**.
-* **Intrusive Doubly-Linked Lists**: Replaces standard pointers (`void*`, 8 bytes) with 32-bit integer slot indices (`prev`, `next`, 4 bytes each), preventing 64-bit pointer bloat and improving CPU cache line packing.
-* **Cache-Conscious Node Packing**: Each `OrderNode` occupies 72 bytes. The entire 65,536-order active pool fits in ~4.7 MiB of memory—comfortably resident inside the 16 MiB L3 cache of modern server processors.
-* **Fixed-Point Tick Arithmetic**: Eliminates IEEE 754 floating-point non-determinism, rounding drift, and CPU pipeline conversion penalties by strictly representing all prices as signed 64-bit integer tick multiples (`PriceTicks` / `std::int64_t`).
-
----
-
-## Multi-Tier Risk Controls & Intraday Circuit Breaker
-
-Trading systems require multi-tiered defense mechanisms to prevent algorithmic rogue trades and catastrophic portfolio drawdowns. QuantEngine implements pre-trade gating and intraday drawdown protection:
-
-```mermaid
-flowchart TD
-    Req["OrderRequest (from Strategy)"] --> Risk["StandardRiskManager (Pre-Trade Filter)"]
-
-    subgraph Hierarchy ["5-Tier Pre-Trade Check Hierarchy"]
-        C1{"1. Max Order Size?"}
-        C2{"2. Max Order Notional?"}
-        C3{"3. Max Position Notional?"}
-        C4{"4. Price Collar (BBO Band % deviation)?"}
-        C5{"5. Max Loss Threshold?"}
-    end
-
-    Risk --> C1
-    C1 -- Exceeded --> R1["Reject: OrderSizeExceeded"]
-    C1 -- OK --> C2
-    C2 -- Exceeded --> R2["Reject: OrderNotionalExceeded"]
-    C2 -- OK --> C3
-    C3 -- Exceeded --> R3["Reject: PositionNotionalExceeded"]
-    C3 -- OK --> C4
-    C4 -- Exceeded --> R4["Reject: PriceBandViolation"]
-    C4 -- OK --> C5
-    C5 -- Exceeded --> R5["Reject: MaxLossExceeded"]
-    C5 -- OK --> CB{"CircuitBreaker Check"}
-
-    subgraph DrawdownBreaker ["CircuitBreaker (Intraday High-Water Mark)"]
-        CB1["Track Intraday Peak PnL"]
-        CB2{"Drawdown >= Trip Threshold?"}
-        CB3["Sticky State: HALTED"]
-    end
-
-    CB --> CB1 --> CB2
-    CB2 -- Yes --> CB3 --> R6["Reject: CircuitBreakerTripped"]
-```
-
----
-
-## In-Flight Order Lifecycle State Machine
-
-Real-world brokers and exchanges require robust handling of in-flight transitions, asynchronous acknowledgments, and partial fills. QuantEngine implements a formal 9-state machine with dual-ID mapping:
-
-```mermaid
-stateDiagram-v2
-    [*] --> Created : Client generates OrderRequest
-    Created --> PendingNew : Dispatched to Execution Gateway
-    PendingNew --> New : Venue OrderAck received (VenueOrderId assigned)
-    PendingNew --> Rejected : Venue rejects order
-    
-    New --> PartiallyFilled : Partial execution received
-    PartiallyFilled --> PartiallyFilled : Subsequent partial fills
-    PartiallyFilled --> Filled : Final fill (RemainingQty == 0)
-    New --> Filled : Complete single-fill execution
-    
-    New --> PendingCancel : CancelRequest dispatched
-    PartiallyFilled --> PendingCancel : CancelRequest dispatched
-    
-    PendingCancel --> Canceled : Venue cancel confirmed
-    PendingCancel --> Filled : Race condition: Venue filled before cancel
-    
-    New --> Expired : Time-In-Force (TIF) expiration
-    
-    Filled --> [*]
-    Canceled --> [*]
-    Rejected --> [*]
-    Expired --> [*]
-```
-
----
-
-## Portfolio Accounting & P&L (`Portfolio`)
-
-QuantEngine incorporates an Average Cost (AVCO) inventory accounting engine:
-* **Position Tracking**: Maintains net position quantities and weighted average entry price for each traded symbol.
-* **Position Reversals**: Handles transitions from Long to Short (and vice versa) seamlessly. An execution that reverses a position realizes P&L on the closed tranche and opens the opposing position at the execution price.
-* **Cash Ledger**: Debits cash for buy fills and credits cash for sell fills.
-* **Mark-to-Market Valuation**: Computes real-time unrealized P&L against live BBO quotes:
-  $$\text{Unrealized PnL} = \text{PositionQty} \times (\text{MarkPrice} - \text{AvgEntryPrice})$$
-* **Zero-Allocation Snapshots (`PortfolioView`)**: Produces compact 40-byte snapshots consumed by `StandardRiskManager` with zero heap allocation overhead.
-
----
-
-## Event Journaling & Deterministic Replay
-
-QuantEngine provides high-performance binary journaling to ensure that every trading session can be audited, analyzed, and replayed with 100% bit-for-bit fidelity.
-
-### 1. `BinaryJournal` (QEVJ v1 Specification)
-* **32-Byte File Header**: Magic identifier `0x5145564A` (`"QEVJ"`), version format (1), endianness verification, and creation timestamp.
-* **Framed Envelopes**: Each record is encapsulated in a 28-byte envelope containing payload size, record type, timestamp, sequence number, and a **64-bit FNV-1a checksum** validating payload integrity.
-
-```
-+-------------------------------------------------------------------------------+
-| Header (32 Bytes): Magic "QEVJ" (0x5145564A) | Version 1 | Flags | Timestamp  |
-+-------------------------------------------------------------------------------+
-| RecordEnvelope (28B): Type | Length | Timestamp | FNV-1a Checksum | Seq       |
-+-------------------------------------------------------------------------------+
-| Payload: OrderCommand (56 Bytes) or MarketEvent (72 Bytes)                    |
-+-------------------------------------------------------------------------------+
-```
-
-### 2. `AsyncJournal` (Non-Blocking Persistence)
-* **Lock-Free / Ring Buffer Queue**: The hot matching thread pushes events to a bounded in-memory circular buffer with zero system call overhead.
-* **Background Worker Thread**: A background thread drains the queue and writes sequential frames to disk with batch flushing.
-* **Deterministic Replay**: Saved binary journals can be replayed through `GenericMatchingEngine` or `StrategyRunner` to reconstruct historical book states with identical canonical hashes.
-
----
-
-## Python Integration & High-Throughput Batch API
-
-QuantEngine exposes its C++ matching core and domain types to Python via **Pybind11**. The bindings are designed for zero-copy efficiency and high-speed quantitative backtesting.
-
-### High-Throughput Batch Ingestion (GIL Released)
-When processing historical order books or backtesting quantitative strategies, executing Python loops incurs heavy interpreter overhead. QuantEngine provides a native batch API that releases the Python Global Interpreter Lock (GIL) and processes orders at native C++ speeds:
-
-```python
-import quantengine as qe
-
-# 1. Instantiate the high-performance C++ matching engine
-engine = qe.OptimizedMatchingEngine()
-
-# 2. Build a high-volume batch of order commands
-commands = [
-    qe.OrderCommand(
-        seq=i,
-        payload=qe.CreateOrderCommand(
-            order_id=i,
-            side=qe.Side.Buy if i % 2 == 0 else qe.Side.Sell,
-            price=10000 + (i % 20),
-            quantity=10
-        )
-    )
-    for i in range(1, 100_000)
-]
-
-# 3. Process entire batch in native C++ (Python GIL released)
-#    Achieves >1.84 Million operations per second
-reports = engine.submit_batch(commands)
-print(f"Processed {len(reports)} orders at native C++ speeds")
-
-# 4. Extract deterministic 64-bit canonical state hash
-state_hash = engine.canonical_hash()
-print(f"Canonical State Hash: {hex(state_hash)}")
-```
-
----
-
-## Interactive CLI Tools
-
-The compiled `quantengine_cli` binary provides built-in tools for interactive visual simulations, microbenchmarks, journal replays, and L3 market replay:
-
-```bash
-# 1. Interactive ASCII depth ladder simulation with live sweeping orders
-./build/release/quantengine_cli demo
-
-# 2. Calibrated microbenchmark measuring throughput and tail latency percentiles
-./build/release/quantengine_cli benchmark --workload balanced --ops 100000 --engine optimized
-
-# 3. Deterministic event journal replay with continuous invariant auditing
-./build/release/quantengine_cli replay examples/sample_journal.csv --verify-invariants
-
-# 4. Historical L3 Market Replay with queue modeling, latency, and portfolio stats
-./build/release/quantengine_cli replay-l3 tests/fixtures/l3_sample.csv \
-    --latency-feed 5000 --latency-entry 5000 --latency-resp 5000 --simulate-mm
-```
-
-### Realistic `replay-l3` Command Output
-```
-=========================================================================
-            HISTORICAL L3 REPLAY & EXECUTION SIMULATION REPORT           
-=========================================================================
- Feed Source:          tests/fixtures/l3_sample.csv
- Events Processed:     13
- Parse Errors Skipped: 0
- Replay Wall Time:     0.02 ms (0.83 Mops/sec)
- Virtual Event Span:   1200 ns (0.00 ms)
--------------------------------------------------------------------------
- EVENT BREAKDOWN:
-   OrderAdded (A):        6
-   OrderExecuted (E):     3
-   OrderCancelled (C):    1
-   OrderReplaced (R):     1
-   TradeMessage (T):      2
--------------------------------------------------------------------------
- FINAL BOOK RECONSTRUCTION:
-   Resting Orders:        4
-   Total Bid Volume:      225
-   Total Ask Volume:      125
-   Best Bid Price (Qty):  28000 (200)
-   Best Ask Price (Qty):  15050 (75)
-   Inside Market Spread:  -12950 ticks
-
-+-------------------------------------------------------------------------+
-|                        ORDER BOOK DEPTH LADDER                          |
-+--------------------+-----------------+-----------------+----------------+
-|   Bid Orders (Vol) |       Bid Price |       Ask Price | Ask Orders(Vol)|
-+--------------------+-----------------+-----------------+----------------+
-|            1 (200) |           28000 |           15050 |         1 (75) |
-|             1 (25) |           15000 |           15075 |         1 (50) |
-+--------------------+-----------------+-----------------+----------------+
-
--------------------------------------------------------------------------
- VIRTUAL LATENCY CONFIGURATION:
-   Feed Latency:          5000 ns
-   Entry Wire Latency:    5000 ns
-   Response Wire Latency: 5000 ns
-   Round-Trip Latency:    10000 ns
--------------------------------------------------------------------------
- PORTFOLIO & QUEUE SIMULATION:
-   Simulated Orders:      4
-   Active Resting:        2
-   Portfolio Realized P&L:0 ticks
-   Open Orders Tracked:   2
--------------------------------------------------------------------------
- DETERMINISTIC STATE & VERIFICATION:
-   Invariant Audit:       PASSED (ZERO ANOMALIES)
-   Canonical 64-bit Hash: 0x9d887bd855316601
-=========================================================================
+    BOT[Trading Bot\nExisting Strategy]
+    REST["REST API\nPOST /api/v3/order\nDELETE /api/v3/order\nGET /api/v3/depth"]
+    WS[WebSocket\n/ws/stream\ndepthUpdate · trade]
+    FASTAPI[FastAPI / uvicorn\nasyncio.Lock]
+    ENGINE[OptimizedMatchingEngine\nC++20 · Zero-Alloc]
+
+    BOT -->|HTTP| REST
+    BOT -->|WS| WS
+    REST --> FASTAPI
+    WS --> FASTAPI
+    FASTAPI -->|GIL released| ENGINE
 ```
 
 ---
@@ -534,238 +100,427 @@ The compiled `quantengine_cli` binary provides built-in tools for interactive vi
 ## Getting Started
 
 ### Prerequisites
-* **C++ Compiler**: GCC 13+ or Clang 16+ (requires full C++20 standard library support)
-* **Build System**: CMake 3.28+ and Ninja (or Make)
-* **Python**: Python 3.10+ (for Python bindings and pytest suites)
 
-### 1. Build in Optimized Release Mode
+| Tool | Minimum version |
+|------|----------------|
+| GCC or Clang | 13+ (C++20 required) |
+| CMake | 3.28+ |
+| Ninja | 1.11+ |
+| Python | 3.9+ |
+
 ```bash
-# Configure release build with all optimizations (-O3 -DNDEBUG)
-cmake -B build/release -DCMAKE_BUILD_TYPE=Release -DQUANTENGINE_BUILD_BENCHMARKS=ON -DQUANTENGINE_BUILD_TESTS=ON
+# Ubuntu 24.04
+sudo apt-get install build-essential cmake ninja-build python3-dev python3-pip
 
-# Compile core library, CLI, test suites, and microbenchmarks
+# macOS (Homebrew)
+brew install cmake ninja
+```
+
+### Clone and Build (C++)
+
+```bash
+git clone --recurse-submodules https://github.com/shubham-dataeng/QuantEngine.git
+cd QuantEngine
+
+# Release build (maximum optimisation)
+cmake --preset dev-release
 cmake --build build/release -j$(nproc)
-```
 
-### 2. Run the Verification Test Suite
-QuantEngine ships with 248 automated tests covering unit logic, property-based differential fuzzing, and Python bindings:
-```bash
-# Execute full GoogleTest suite (248 tests passing in ~0.06 seconds)
-./build/release/tests/quantengine_tests
-```
-
-### 3. Build & Audit with AddressSanitizer and UndefinedBehaviorSanitizer
-To guarantee zero memory corruption, buffer overflows, or undefined behavior:
-```bash
-# Configure with ASan and UBSan flags enabled
-cmake -B build/dev-sanitizer -DCMAKE_BUILD_TYPE=Debug -DQUANTENGINE_ENABLE_SANITIZERS=ON -DQUANTENGINE_BUILD_TESTS=ON
-
-# Build and execute tests under strict sanitizer inspection
+# Sanitizer build (AddressSanitizer + UndefinedBehaviourSanitizer)
+cmake --preset dev-sanitizer
 cmake --build build/dev-sanitizer -j$(nproc)
+```
+
+### Run C++ Tests
+
+```bash
+# All 248 tests (release)
+./build/release/tests/quantengine_tests
+
+# With sanitizers
 ./build/dev-sanitizer/tests/quantengine_tests
 ```
 
-### 4. Run High-Performance Microbenchmarks
-```bash
-# Run core matching engine microbenchmarks
-./build/release/benchmarks/quantengine_benchmarks
-
-# Run Historical L3 Replay microbenchmarks (10k, 100k, 1M scales)
-./build/release/benchmarks/quantengine_bench_l3
+Expected output:
+```
+[==========] 248 tests from 18 test suites ran.
+[  PASSED  ] 248 tests.
 ```
 
-### 5. Install Python Bindings
-Install the extension directly into your Python environment:
-```bash
-pip install .
+### Install Python Bindings
 
-# Run Python integration test suite
-pytest tests/python/
+```bash
+pip install .                      # core bindings only
+pip install ".[server]"            # + FastAPI exchange server
+pip install ".[all]"               # + tests + replay
+```
+
+### Quick Python Example
+
+```python
+import quantengine as qe
+
+engine = qe.OptimizedMatchingEngine()
+
+# Place resting bid
+r = engine.submit_order(1, qe.Side.Buy, 50_000_00, 10)   # price in ticks
+print(r.status)   # OrderStatus.Resting
+
+# Aggressive sell crosses the book
+r = engine.submit_order(2, qe.Side.Sell, 49_999_00, 5)
+print(r.status)          # OrderStatus.Filled
+print(len(r.trades))     # 1
+
+# Deterministic canonical hash
+print(f"0x{engine.canonical_hash():016x}")
 ```
 
 ---
 
-## Usage Example: End-to-End C++20 Workflow
+## Exchange API Server
 
-```cpp
-#include <iostream>
-#include "quantengine/core/types.hpp"
-#include "quantengine/engine/generic_matching_engine.hpp"
-#include "quantengine/optimized/optimized_order_book.hpp"
+The `server.py` module boots a **Binance-compatible mock exchange** powered by the C++ engine. Point any standard trading bot at it with zero code changes.
 
-using namespace quantengine;
-using namespace quantengine::core;
-using namespace quantengine::optimized;
+### Start the Server
 
-int main() {
-    // 1. Instantiate zero-allocation matching engine
-    engine::GenericMatchingEngine<OptimizedOrderBook> engine;
+```bash
+python server.py --host 0.0.0.0 --port 8080 --tick-size 0.01
+```
 
-    // 2. Place resting limit orders on the bid side
-    CreateOrderCommand bid1{
-        .order_id = 101,
-        .side = Side::Buy,
-        .price = 10000,    // Price in integer ticks
-        .quantity = 50
-    };
-    engine.submit_order(OrderCommand{.seq = 1, .payload = bid1});
+Or with Docker:
+```bash
+docker compose up --build
+```
 
-    // 3. Place an aggressive crossing order that sweeps liquidity
-    CreateOrderCommand aggressive_ask{
-        .order_id = 102,
-        .side = Side::Sell,
-        .price = 10000,    // Matches bid at maker price (10000)
-        .quantity = 30
-    };
-    ExecutionReport report = engine.submit_order(OrderCommand{.seq = 2, .payload = aggressive_ask});
+### REST Endpoints
 
-    // 4. Inspect trade execution report
-    std::cout << "Order Status: " << static_cast<int>(report.status) << "\n";
-    std::cout << "Executed Quantity: " << report.filled_qty << "\n";
-    for (const auto& trade : report.trades) {
-        std::cout << "Trade Executed: Maker=" << trade.maker_order_id
-                  << " Taker=" << trade.taker_order_id
-                  << " Price=" << trade.price
-                  << " Qty=" << trade.quantity << "\n";
-    }
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v3/ping` | Connectivity check |
+| GET | `/api/v3/time` | Server time (Unix ms) |
+| GET | `/api/v3/exchangeInfo` | Symbol and filter metadata |
+| GET | `/api/v3/depth?symbol=BTCUSDT&limit=20` | L2 order book snapshot |
+| GET | `/api/v3/trades?symbol=BTCUSDT` | Recent trade history |
+| GET | `/api/v3/ticker/bookTicker?symbol=BTCUSDT` | Best bid/ask |
+| POST | `/api/v3/order` | Place new limit order |
+| DELETE | `/api/v3/order?orderId=…` | Cancel a resting order |
+| GET | `/api/v3/order?orderId=…` | Query order status |
+| GET | `/api/v3/openOrders?symbol=BTCUSDT` | List all resting orders |
+| GET | `/qe/audit` | C++ invariant audit + canonical hash |
+| POST | `/qe/reset` | Reset engine to empty state |
 
-    // 5. Compute bit-exact canonical state hash
-    std::uint64_t hash = engine.canonical_hash();
-    std::cout << "Canonical State Hash: 0x" << std::hex << hash << "\n";
+### Example: Place and Cancel an Order
 
-    return 0;
+```bash
+# Place a bid
+curl -X POST http://localhost:8080/api/v3/order \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol": "BTCUSDT",
+    "side": "BUY",
+    "type": "LIMIT",
+    "timeInForce": "GTC",
+    "quantity": "5",
+    "price": "50000.00",
+    "newClientOrderId": "my_bot_order_1"
+  }'
+```
+
+Response (Binance schema):
+```json
+{
+  "symbol": "BTCUSDT",
+  "orderId": 1,
+  "clientOrderId": "my_bot_order_1",
+  "transactTime": 1727890123456,
+  "price": "50000.00",
+  "origQty": "5",
+  "executedQty": "0",
+  "status": "NEW",
+  "timeInForce": "GTC",
+  "type": "LIMIT",
+  "side": "BUY",
+  "fills": []
 }
 ```
 
----
-
-## Testing & Quality Assurance Matrix
-
-| Test Category | Target / Suite | Count | Verification Scope |
-| :--- | :--- | :---: | :--- |
-| **Unit Tests** | `tests/unit/test_*.cpp` | 213 | Core orders, trades, event routing, portfolio AVCO, risk manager, state machine, circuit breaker, binary journal, L3 messages, historical book, queue tracker, latency model, replay gateway, market making experiment |
-| **Differential Fuzzing**| `FuzzSeeds/DifferentialFuzzTest` | 4 | Multi-seed property-based fuzz tests comparing `ReferenceOrderBook` vs `OptimizedOrderBook` |
-| **Sanitizers (ASan/UBSan)**| `dev-sanitizer` preset | 248 | Continuous memory leak, bounds check, and undefined behavior audit |
-| **Python Integration**| `tests/python/test_*.py` | 31 | Type conversions, matching engine interop, determinism replay, high-throughput batch API |
-| **Layout Guards** | Compile-Time Assertions | 14+ | `static_assert(sizeof(...))` verifying exact byte sizes and alignment |
-| **Total Automated Tests**| **`ctest` / `quantengine_tests`** | **248** | **100% Passing in < 1.4s** |
-
----
-
-## Repository Layout
-
-```
-QuantEngine/
-├── CMakeLists.txt              # Top-level CMake configuration
-├── CMakePresets.json           # Standard build presets (dev-release, dev-debug, dev-sanitizer)
-├── setup.py                    # Python setuptools packaging script
-├── pyproject.toml              # Python build system specification
-├── include/
-│   └── quantengine/
-│       ├── core/               # Orders, trades, types, versioning
-│       ├── engine/             # Matching engines, canonical state, invariants, replay
-│       ├── reference/          # ReferenceOrderBook (STL baseline)
-│       ├── optimized/          # OptimizedOrderBook (Zero-allocation arena pool)
-│       ├── replay/             # Historical L3 Replay (L3Message, Book, QueueModel, Timeline, Gateway)
-│       ├── market/             # IMarketDataFeed, MarketEvent (Tick, Quote, Trade, Snapshot)
-│       ├── execution/          # IExecutionGateway, OrderStateMachine, SimGateway
-│       ├── risk/               # IRiskManager, StandardRiskManager, CircuitBreaker
-│       ├── portfolio/          # Portfolio (AVCO accounting, PnL, PortfolioView)
-│       ├── strategy/           # IStrategy, StrategyRunner event loop
-│       ├── journal/            # BinaryJournal (QEVJ v1), AsyncJournal
-│       └── broker/             # AlpacaWsFeed, AlpacaGateway
-├── src/
-│   ├── cli/                    # quantengine_cli (demo ladder, benchmark, replay, replay-l3)
-│   ├── core/                   # Core types and serialization implementations
-│   ├── engine/                 # Matching engine, invariants, canonical hashing
-│   ├── reference/              # Reference order book implementation
-│   ├── optimized/              # Optimized order book & OrderPool implementation
-│   ├── replay/                 # L3 parser, HistoricalL3Book, QueueTracker, Timeline, ReplayGateway
-│   ├── execution/              # OrderStateMachine & SimGateway implementations
-│   ├── risk/                   # StandardRiskManager implementation
-│   ├── portfolio/              # Portfolio AVCO accounting implementation
-│   ├── strategy/               # StrategyRunner implementation
-│   ├── journal/                # BinaryJournal & AsyncJournal worker implementations
-│   └── broker/                 # AlpacaWsFeed & AlpacaGateway implementations
-├── bindings/
-│   └── python/                 # Pybind11 C++ bindings and quantengine.pyi type stubs
-├── tests/
-│   ├── unit/                   # 213 GoogleTest unit test cases (core + replay + strategy)
-│   ├── fuzz/                   # Differential property-based fuzz generator
-│   ├── fixtures/               # Repository-safe synthetic L3 CSV market data
-│   └── python/                 # Pytest test suite (31 test cases)
-├── benchmarks/                 # Google Benchmark latency, throughput & L3 replay microbenchmarks
-├── examples/                   # Sample event journals (CSV)
-├── docs/                       # ARCHITECTURE.md, DESIGN_DECISIONS.md, BENCHMARKS.md
-└── third_party/                # GoogleTest, Google Benchmark, Pybind11 submodules
+```bash
+# Cancel it
+curl -X DELETE "http://localhost:8080/api/v3/order?symbol=BTCUSDT&orderId=1"
 ```
 
----
+### WebSocket Stream
 
-## Platform Milestones & Verification Status
+```bash
+# Subscribe to real-time depth updates and trade stream
+wscat -c ws://localhost:8080/ws/stream
+```
 
-All architectural phases and platform milestones have been fully implemented, integrated, and verified:
-
-- [x] **Phase 0–10: Core Matching Engine & Infrastructure**
-  - Limit order placement, cancellations, FIFO priority matching, level sweeps, execution reports.
-  - Dual-engine architecture: `ReferenceOrderBook` and `OptimizedOrderBook`.
-  - Invariant auditing and 64-bit FNV-1a canonical state hashing.
-  - Interactive CLI tools with real-time ASCII depth ladder.
-  - Pybind11 Python bindings with GIL-released batch processing API.
-- [x] **Engine Hardening**
-  - Compile-time `static_assert` layout verification across all fundamental structs.
-  - Spread crossing validation (`ModifyCrossesSpread`) preventing order book corruption.
-- [x] **Milestone 1–3: Architectural Guardrails & Platform Interfaces**
-  - Clang-Tidy static analysis configuration and zero-warning build hygiene.
-  - Zero-allocation C++20 interface contracts (`MarketEvent`, `IMarketDataFeed`, `IExecutionGateway`, `IRiskManager`).
-  - Comprehensive TDD unit test harnesses.
-- [x] **Milestone 4 & 7: Simulation Gateway & Pre-Trade Risk Manager**
-  - Synchronous `SimGateway` with IOC support and simulated fills.
-  - `StandardRiskManager` enforcing 5-limit pre-trade hierarchy and sub-nanosecond `RiskVerdict` generation.
-- [x] **Milestone 6 & 8: Portfolio Accounting & Strategy Event Loop**
-  - `Portfolio` tracker implementing Average Cost (AVCO) accounting, realized/unrealized P&L, and position reversals.
-  - `StrategyRunner` executing synchronous event dispatch from market feeds to risk gates and execution gateways.
-- [x] **Phase 0.3 / Milestone 2 Upgrade: Order-Granularity Canonical Hash**
-  - Full order-level state hashing across bid and ask queues (`get_all_bid_orders()`, `get_all_ask_orders()`).
-- [x] **Milestone 5 & 14: Binary Event Journaling & Non-Blocking Worker**
-  - `BinaryJournal` implementing framed QEVJ v1 binary specification with FNV-1a checksums.
-  - `AsyncJournal` background worker thread draining bounded queue for non-blocking persistence.
-- [x] **Milestone 11: In-Flight Order Lifecycle State Machine**
-  - `OrderStateMachine` implementing 9-state formal lifecycle with internal-to-venue ID mapping and duplicate protection.
-- [x] **Milestone 13: Intraday Drawdown Circuit Breaker**
-  - `CircuitBreaker` tracking rolling intraday high-water mark with warning thresholds and sticky halt protection.
-- [x] **Milestone 9, 10 & 12: Alpaca WebSocket Feed & REST Gateway Simulation**
-  - `AlpacaWsFeed` JSON market data parser with sequence gap tracking and simulated reconnection.
-  - `AlpacaGateway` REST payload formatter, venue state machine reconciliation, and fill injection.
-- [x] **Phase 1–5: Historical L3 Market Replay & Execution Simulation**
-  - Strongly typed canonical L3 market events (`OrderAdded`, `OrderExecuted`, `OrderCancelled`, `OrderReplaced`, `TradeMessage`).
-  - Zero-copy streaming `L3CsvParser` with adversarial syntactic and semantic validation.
-  - Deterministic `HistoricalL3Book` reconstruction with FIFO queues, depth ladder, and 64-bit FNV-1a canonical hash.
-  - Deterministic queue position model (`FifoQueueModel`, `QueuePositionTracker`) tracking queue ahead and cancellation attribution.
-  - Monotonic `EventClock`, 4-stage configurable `LatencyModel` (feed, decision, entry wire, response wire), and priority-ordered `VirtualTimeline`.
-  - `ReplayGateway` integrating aggressive sweeps and passive queue fills with portfolio AVCO ledger accounting.
-  - End-to-end deterministic market maker research experiment and `quantengine_cli replay-l3` command.
-  - Realistic 100k and 1M event microbenchmarks (`BM_L3CsvParser_ParseLine`, `BM_HistoricalL3Book_Reconstruction`, `BM_FullReplay_Pipeline`).
-
-### Future Roadmap
-- [ ] Direct binary exchange protocols (e.g., NASDAQ ITCH 5.0 market data, OUCH 5.0 order entry).
-- [ ] FIX 4.2 / 4.4 protocol session layer.
-- [ ] Kernel-bypass network drivers (Solarflare OpenOnload / EF_VI / DPDK).
-- [ ] Hardware-accelerated matching kernel on FPGA via PCIe memory-mapped registers.
+On connection you receive an immediate book snapshot, then live `depthUpdate` and `trade` events after every order mutation — matching the [Binance diff-depth stream](https://developers.binance.com/docs/binance-spot-api-docs/web-socket-streams) format.
 
 ---
 
-## Contributing
+## L3 Historical Replay
 
-Contributions to QuantEngine are welcome. Please ensure that all submissions adhere to the project's engineering standards:
+### CLI Tool
 
-1. **Format & Style**: Format all C++ code using `clang-format` (`find include src tests benchmarks bindings -name '*.hpp' -o -name '*.cpp' | xargs clang-format -i`).
-2. **Zero Warnings**: Code must compile cleanly under `-Wall -Wextra -Wpedantic -Werror`.
-3. **Memory Integrity**: All changes must pass AddressSanitizer and UndefinedBehaviorSanitizer suites with zero leaks or errors (`./build/dev-sanitizer/tests/quantengine_tests`).
-4. **Full Test Coverage**: Every new feature or bugfix must be accompanied by GoogleTest unit tests, and all **248 tests** must pass.
+```bash
+./build/release/quantengine_cli replay-l3 \
+    --input tests/fixtures/l3_sample.csv \
+    --tick-size 0.01
+```
+
+Sample output:
+```
+╔══════════════════════════════════════════════════════════════════╗
+║          QuantEngine L3 Historical Replay — Results              ║
+╠══════════════════════════════════════════════════════════════════╣
+║  Events processed   │ 1,000,000                                  ║
+║  Simulated fills    │ 5,432                                       ║
+║  Queue stats        │ ahead_min=0  ahead_max=12480  avg=3201      ║
+║  Virtual latency    │ feed=1µs  decision=5µs  entry=2µs          ║
+║  Realised P&L       │ +$1,240.55                                  ║
+║  Canonical hash     │ 0x3f9a4b2c1d8e7f60                          ║
+╚══════════════════════════════════════════════════════════════════╝
+```
+
+### Python Replay Utility
+
+```bash
+python historical_replay.py \
+    --input data/BTCUSDT_L3.csv \
+    --output replay_result.json \
+    --tick-size 0.01 \
+    --snapshot-interval 50000 \
+    --symbol BTCUSDT
+```
+
+Output JSON contains throughput metrics, periodic depth snapshots, the canonical hash, and invariant verification.
+
+### L3 CSV Format
+
+```csv
+timestamp_ns,event_type,order_id,side,price,quantity
+1700000000000000000,ADD,1001,B,50000.00,10
+1700000000001000000,ADD,1002,S,50100.00,5
+1700000000002000000,EXECUTE,1001,,50000.00,10
+1700000000003000000,CANCEL,1002,,,
+```
+
+| Field | Values | Notes |
+|-------|--------|-------|
+| `timestamp_ns` | int64 | Exchange nanosecond timestamp |
+| `event_type` | `ADD` `CANCEL` `EXECUTE` `MODIFY` | |
+| `order_id` | int64 | Unique per resting order |
+| `side` | `B` `S` | Ignored for CANCEL/EXECUTE |
+| `price` | decimal | Ignored for CANCEL/EXECUTE |
+| `quantity` | int | Remaining quantity at this event |
 
 ---
 
-## License & Notice
+## Benchmarks
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details. QuantEngine is intended for high-performance trading research, institutional simulation, and quantitative software engineering education.
+All benchmarks run on: **AMD Ryzen 7 7840HS, GCC 13.3.0, `-O3 -march=native`**, Release build, isolated core.
+
+### Matching Engine
+
+| Scenario | Throughput | Mean Latency | p99 Latency |
+|----------|-----------|-------------|------------|
+| Balanced book (50% cross) | **11.79 Mops/s** | 84.8 ns | 281 ns |
+| Crossing orders (full fill) | **15.14 Mops/s** | 66.0 ns | 218 ns |
+| Cancel-heavy workload | **13.41 Mops/s** | 74.6 ns | 244 ns |
+
+### L3 Replay Pipeline
+
+| Stage | Events | Throughput |
+|-------|--------|-----------|
+| CSV parsing | 1M lines | **14.51 Mlines/s** |
+| Book reconstruction | 100k events | **7.08 Mevents/s** |
+| Full pipeline (book + queue + simulator) | 100k events | **7.15 Mevents/s** |
+| Full pipeline (1M events) | 1M events | **7.22 Mevents/s** |
+
+### Memory
+
+| Component | Allocation strategy | Heap calls (steady state) |
+|-----------|-------------------|--------------------------|
+| `OptimizedOrderBook` | Arena pool (65,536 slots × 64 B) | **Zero** |
+| `ReferenceOrderBook` | `std::map` + `std::list` | O(log N) per insert |
+| L3 event vector | `std::vector` (pre-reserved) | Zero after initial reserve |
+
+---
+
+## Local HFT Bot Backtesting
+
+QuantEngine is designed to be the fastest path from a tick data CSV to an honest fill simulation:
+
+```
+┌─────────────────────────────────────────────────────┐
+│  1. Acquire L3 tick data (e.g. Tardis.dev CSV)      │
+│  2. Run historical_replay.py to seed the engine     │
+│  3. Point your bot at server.py (REST + WebSocket)  │
+│  4. Compare canonical hashes across runs for        │
+│     determinism verification                        │
+└─────────────────────────────────────────────────────┘
+```
+
+**Determinism guarantee:** Two runs of `historical_replay.py` on the same CSV with the same strategy produce the exact same canonical hash. This is enforced by the engine's `ReplayEngine::verify_determinism()` cross-engine test.
+
+### Setting Up for Algo Testing
+
+```bash
+# 1. Start the mock exchange
+python server.py --tick-size 0.01 &
+
+# 2. Pump historical data through the engine via the replay CLI
+./build/release/quantengine_cli replay-l3 --input my_data.csv
+
+# 3. Connect your trading bot
+# python my_bot.py --host localhost --port 8080
+# (uses the standard Binance SDK — no modification needed)
+
+# 4. Verify determinism
+python -c "
+import quantengine as qe
+result1 = qe.ReplayEngine.replay_optimized(commands)
+result2 = qe.ReplayEngine.replay_optimized(commands)
+assert result1.final_hash == result2.final_hash, 'Non-determinism detected!'
+print(f'Hash: 0x{result1.final_hash:016x} — determinism verified.')
+"
+```
+
+---
+
+## Simulation Limitations
+
+> [!IMPORTANT]
+> QuantEngine produces a **deterministic simulation**, not a live market. The following factors are **not modelled** and will cause simulation results to deviate from live trading outcomes. Understand these before making real capital decisions.
+
+### What Is Not Modelled
+
+| Limitation | Impact | Severity |
+|-----------|--------|----------|
+| **Hidden/iceberg liquidity** | Displayed depth underestimates true available liquidity; fills may be faster in reality | High |
+| **Off-exchange internalization** | Market makers route retail flow internally; aggressive orders may fill at mid without touching the displayed book | High |
+| **Last-look and quote-stuffing** | Liquidity providers can withdraw quotes after seeing a taker order; fills may reject in live | Medium |
+| **Adverse selection bias** | If you are consistently filling, you are trading against better-informed participants; simulation does not capture post-fill mean reversion | Medium |
+| **Fee structure** | Maker/taker rebates and tier discounts are not applied to P&L | Medium |
+| **Network jitter** | The latency model uses deterministic values; real-world variance (tail latency, packet loss) is not simulated | Low |
+| **Corporate actions / circuit breakers** | Halts, limit-up/down, and volatility auctions are not modelled | Low |
+| **Cross-venue arbitrage** | The engine models a single venue; multi-leg strategies across exchanges cannot be accurately evaluated | Low |
+
+### Appropriate Use Cases
+
+✅ **Good for:**
+- Testing order routing and order management logic
+- Verifying that your bot correctly handles partial fills, cancels, and rejects
+- Measuring relative performance of strategy variants in controlled conditions
+- Stress-testing latency and throughput of your execution infrastructure
+
+❌ **Not suitable for:**
+- Estimating absolute P&L or Sharpe ratio of live strategies
+- Optimising fill rate on passive orders (queue position estimates are approximate)
+- Any strategy that relies on dark pool, internalised, or OTC liquidity
+
+---
+
+## Docker Deployment
+
+```bash
+# Build and start the exchange in one command
+docker compose up --build
+
+# Run a historical replay job
+docker compose --profile replay up replay
+
+# Check exchange health
+curl http://localhost:8080/api/v3/ping
+```
+
+The multi-stage `Dockerfile` uses `ubuntu:24.04` to compile the C++ engine and `python:3.12-slim` as the runtime — the final image is approximately 180 MB.
+
+---
+
+## Commercial Licensing
+
+QuantEngine is dual-licensed:
+
+| License | Use Case | Cost |
+|---------|----------|------|
+| **AGPLv3** (this repo) | Open-source projects, academic research, personal use | Free |
+| **Commercial License** | Proprietary trading systems, prop shops, hedge funds, SaaS products that do not wish to open-source their modifications | Contact us |
+
+The AGPL requires that any software that incorporates or communicates with QuantEngine over a network must also be released under the AGPL. If this is incompatible with your business model, a commercial license removes this obligation.
+
+**To acquire a commercial license:**
+- Email: **commercial@quantengine.io**
+- Subject: `Commercial License Enquiry — [Your Company]`
+- Include: intended use case, expected order volume, number of seats
+
+---
+
+## Development
+
+### CMake Presets
+
+| Preset | Description | Output directory |
+|--------|-------------|-----------------|
+| `dev-release` | `-O3 -march=native`, no sanitizers | `build/release/` |
+| `dev-sanitizer` | `-O1 -fsanitize=address,undefined` | `build/dev-sanitizer/` |
+| `dev-debug` | `-O0 -g`, full symbols | `build/debug/` |
+
+### Running Python Tests
+
+```bash
+# Install in editable mode with dev extras
+pip install -e ".[dev]"
+
+# Run all Python tests (including server tests)
+pytest tests/python -v
+
+# Run server tests only
+pytest tests/python/test_server.py -v
+```
+
+### Code Formatting
+
+```bash
+# Reformat all C++ sources (requires clang-format 17+)
+find include src tests benchmarks bindings -name '*.hpp' -o -name '*.cpp' \
+  | xargs clang-format -i
+```
+
+---
+
+## Project Milestones
+
+- [x] Phase 1 — Core matching engine: `GenericMatchingEngine`, `OptimizedOrderBook`, `ReferenceOrderBook`, invariant auditor, canonical state hash
+- [x] Phase 2 — L3 canonical events: `L3Message`, `IL3MarketDataSource`, `L3CsvParser`, adversarial tests
+- [x] Phase 3 — Historical book & queue model: `HistoricalL3Book`, `FifoQueueModel`, `QueuePositionTracker`, differential tests
+- [x] Phase 4 — Virtual time & execution: `EventClock`, `LatencyModel`, `VirtualTimeline`, `ReplayGateway`, Portfolio integration
+- [x] Phase 5 — CLI, benchmarks, strategy experiment: `quantengine_cli replay-l3`, 14+ Mlines/s parsing, 7+ Mevents/s reconstruction
+- [x] Phase 6 — Code polish & documentation: clang-format, 248/248 tests, zero-warning build under `-Werror`
+- [x] **Phase 7 — Exchange API & commercialisation:** FastAPI REST+WebSocket server, cross-platform wheel CI, Docker, `historical_replay.py`, AGPLv3 dual-licensing
+
+---
+
+## License
+
+```
+QuantEngine — High-Performance C++20 Deterministic Limit Order Matching Engine
+Copyright (C) 2024 QuantEngine Authors
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, contact: commercial@quantengine.io
+```

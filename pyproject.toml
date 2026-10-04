@@ -4,29 +4,59 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quantengine"
-version = "0.1.0"
-description = "Deterministic C++20 Limit Order Matching Engine"
+version = "1.0.0"
+description = "High-performance C++20 deterministic limit order matching engine with Binance-compatible exchange API"
 readme = "README.md"
-requires-python = ">=3.8"
-license = { text = "MIT" }
+requires-python = ">=3.9"
+license = { text = "AGPL-3.0-or-later" }
 authors = [
-    { name = "QuantEngine Authors" }
+    { name = "QuantEngine Authors", email = "commercial@quantengine.io" }
 ]
-keywords = ["matching-engine", "orderbook", "hft", "trading", "finance", "cpp20"]
+keywords = [
+    "matching-engine", "orderbook", "hft", "trading", "finance", "cpp20",
+    "limit-order-book", "market-microstructure", "backtesting", "exchange",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Financial and Insurance Industry",
-    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
     "Programming Language :: C++",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+]
+
+# Runtime dependencies are minimal — the .so extension is self-contained.
+# Optional extras install the server or replay components.
+[project.optional-dependencies]
+server = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "websockets>=12.0",
+]
+replay = []
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+]
+all = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "websockets>=12.0",
+    "pytest>=8.0",
+    "httpx>=0.27",
 ]
 
 [project.urls]
 Homepage = "https://github.com/shubham-dataeng/QuantEngine"
 Repository = "https://github.com/shubham-dataeng/QuantEngine.git"
+"Bug Tracker" = "https://github.com/shubham-dataeng/QuantEngine/issues"
+"Commercial Licensing" = "mailto:commercial@quantengine.io"

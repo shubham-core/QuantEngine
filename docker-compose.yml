@@ -1,0 +1,77 @@
+version: "3.9"
+
+# =============================================================================
+# QuantEngine docker-compose — instant mock exchange deployment
+# =============================================================================
+# Usage:
+#   docker compose up --build          # build + start exchange
+#   docker compose up -d               # detached (background)
+#   docker compose logs -f exchange    # tail logs
+#   docker compose down                # stop and remove containers
+#   docker compose run --rm replay     # run historical replay utility
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Core exchange service
+  # ---------------------------------------------------------------------------
+  exchange:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CMAKE_BUILD_TYPE: Release
+        NPROC: "4"
+    image: quantengine:latest
+    container_name: quantengine_exchange
+    ports:
+      - "${QUANTENGINE_PORT:-8080}:8080"
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/v3/ping')",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "com.quantengine.component=exchange"
+      - "com.quantengine.version=1.0.0"
+
+  # ---------------------------------------------------------------------------
+  # Historical replay utility (one-shot, exits when done)
+  # ---------------------------------------------------------------------------
+  replay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder          # use the builder stage which has the CSV fixtures
+    image: quantengine:builder
+    container_name: quantengine_replay
+    profiles:
+      - replay                 # opt-in: docker compose --profile replay up replay
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./tests/fixtures:/data/fixtures:ro   # mount host fixtures directory
+      - ./replay_output:/data/output         # write replay results here
+    command:
+      [
+        "python",
+        "/build/src/historical_replay.py",
+        "--input",
+        "/data/fixtures/l3_sample.csv",
+        "--output",
+        "/data/output/replay_result.json",
+        "--tick-size",
+        "0.01",
+      ]
+    labels:
+      - "com.quantengine.component=replay"
