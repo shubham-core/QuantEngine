@@ -7,12 +7,12 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-red.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Build](https://github.com/shubham-dataeng/QuantEngine/actions/workflows/ci.yml/badge.svg)](https://github.com/shubham-dataeng/QuantEngine/actions/workflows/ci.yml)
 [![Wheels](https://github.com/shubham-dataeng/QuantEngine/actions/workflows/build-wheels.yml/badge.svg)](https://github.com/shubham-dataeng/QuantEngine/actions/workflows/build-wheels.yml)
-[![Tests](https://img.shields.io/badge/tests-248%20passing-brightgreen.svg)](#)
+[![Tests](https://img.shields.io/badge/tests-248%20C%2B%2B%20%7C%2063%20Python%20passing-brightgreen.svg)](#)
 [![Python](https://img.shields.io/badge/Python-3.9%20|%203.10%20|%203.11%20|%203.12-blue.svg?logo=python)](https://pypi.org/project/quantengine/)
 
 **A production-grade, deterministic C++20 Limit Order Book matching engine with a Binance-compatible REST + WebSocket exchange API.**
 
-[Getting Started](#getting-started) · [Architecture](#architecture) · [Exchange API](#exchange-api-server) · [L3 Historical Replay](#l3-historical-replay) · [Benchmarks](#benchmarks) · [Commercial License](#commercial-licensing)
+[Quickstart](#hands-on-quickstart-2-minute-walkthrough) · [Architecture](#architecture) · [Getting Started](#getting-started) · [Exchange API](#exchange-api-server) · [L3 Historical Replay](#l3-historical-replay) · [Benchmarks](#benchmarks) · [Commercial License](#commercial-licensing)
 
 </div>
 
@@ -28,6 +28,48 @@ QuantEngine takes a different approach:
 - **Canonical binary state hash.** After every event, a 64-bit FNV-1a hash over the serialised book state produces a single integer. Two engines that process the same command log **must** produce the same hash — this is enforced by a cross-engine invariant test on every CI push.
 - **L3 event-time replay.** The historical replay subsystem reconstructs the full exchange book from raw L3 tick data (ADD / CANCEL / EXECUTE / MODIFY), tracks FIFO queue position for each resting order, and simulates virtual latency for your strategy's observation, decision, and submission paths.
 - **Full exchange API.** The `server.py` FastAPI layer wraps the C++ engine in a Binance-compatible REST + WebSocket server. Point your existing trading bot at `localhost:8080` and it will not know the difference.
+
+---
+
+## Hands-On Quickstart (2-Minute Walkthrough)
+
+Experience the full exchange lifecycle from your terminal in under two minutes:
+
+### 1. Boot the Exchange Server (Terminal 1)
+```bash
+PYTHONPATH=build/release/python python3 server.py --host 127.0.0.1 --port 8080
+```
+
+### 2. Inspect Depth & Place Orders (Terminal 2)
+```bash
+# Ping connectivity
+curl -s http://127.0.0.1:8080/api/v3/ping
+
+# Check empty book
+curl -s "http://127.0.0.1:8080/api/v3/depth?symbol=BTCUSDT"
+
+# Place a resting limit BUY order (5 BTC @ $50,000.00)
+curl -s -X POST http://127.0.0.1:8080/api/v3/order \
+  -H "Content-Type: application/json" \
+  -d '{"symbol":"BTCUSDT","side":"BUY","type":"LIMIT","timeInForce":"GTC","quantity":"5","price":"50000.00","newClientOrderId":"my_bid"}'
+
+# Cross the book with an aggressive SELL order (2 BTC @ $49,000.00)
+curl -s -X POST http://127.0.0.1:8080/api/v3/order \
+  -H "Content-Type: application/json" \
+  -d '{"symbol":"BTCUSDT","side":"SELL","type":"LIMIT","timeInForce":"GTC","quantity":"2","price":"49000.00","newClientOrderId":"my_ask"}'
+
+# View the executed trade on the public tape
+curl -s "http://127.0.0.1:8080/api/v3/trades?symbol=BTCUSDT"
+
+# Query original order status (shows PARTIALLY_FILLED, 3 BTC resting)
+curl -s "http://127.0.0.1:8080/api/v3/order?symbol=BTCUSDT&origClientOrderId=my_bid"
+
+# Cancel resting liquidity
+curl -s -X DELETE "http://127.0.0.1:8080/api/v3/order?symbol=BTCUSDT&orderId=1"
+
+# Audit C++ internal memory pool invariants and state hash
+curl -s http://127.0.0.1:8080/qe/audit
+```
 
 ---
 
@@ -137,14 +179,25 @@ cmake --build build/dev-sanitizer -j$(nproc)
 # All 248 tests (release)
 ./build/release/tests/quantengine_tests
 
-# With sanitizers
+# With sanitizers (ASan/UBSan clean)
 ./build/dev-sanitizer/tests/quantengine_tests
 ```
 
 Expected output:
 ```
-[==========] 248 tests from 18 test suites ran.
+[==========] 248 tests from 40 test suites ran. (119 ms total)
 [  PASSED  ] 248 tests.
+```
+
+### Run Python Tests (32 Server + 31 Engine Tests)
+
+```bash
+PYTHONPATH=build/release/python python3 -m pytest tests/python/ -v
+```
+
+Expected output:
+```
+======================== 63 passed, 1 warning in 0.73s =========================
 ```
 
 ### Install Python Bindings
@@ -162,16 +215,16 @@ import quantengine as qe
 
 engine = qe.OptimizedMatchingEngine()
 
-# Place resting bid
-r = engine.submit_order(1, qe.Side.Buy, 50_000_00, 10)   # price in ticks
+# Place resting bid (price in ticks: 50,000.00 USD = 5,000,000 ticks)
+r = engine.submit_order(1, qe.Side.Buy, 5_000_000, 10)
 print(r.status)   # OrderStatus.Resting
 
 # Aggressive sell crosses the book
-r = engine.submit_order(2, qe.Side.Sell, 49_999_00, 5)
+r = engine.submit_order(2, qe.Side.Sell, 4_999_900, 5)
 print(r.status)          # OrderStatus.Filled
 print(len(r.trades))     # 1
 
-# Deterministic canonical hash
+# Deterministic canonical state hash
 print(f"0x{engine.canonical_hash():016x}")
 ```
 
@@ -184,11 +237,10 @@ The `server.py` module boots a **Binance-compatible mock exchange** powered by t
 ### Start the Server
 
 ```bash
-python server.py --host 0.0.0.0 --port 8080 --tick-size 0.01
-```
+# Direct run using built bindings
+PYTHONPATH=build/release/python python3 server.py --host 0.0.0.0 --port 8080 --tick-size 0.01
 
-Or with Docker:
-```bash
+# Or with Docker
 docker compose up --build
 ```
 
@@ -213,7 +265,7 @@ docker compose up --build
 
 ```bash
 # Place a bid
-curl -X POST http://localhost:8080/api/v3/order \
+curl -s -X POST http://localhost:8080/api/v3/order \
   -H "Content-Type: application/json" \
   -d '{
     "symbol": "BTCUSDT",
@@ -246,7 +298,7 @@ Response (Binance schema):
 
 ```bash
 # Cancel it
-curl -X DELETE "http://localhost:8080/api/v3/order?symbol=BTCUSDT&orderId=1"
+curl -s -X DELETE "http://localhost:8080/api/v3/order?symbol=BTCUSDT&orderId=1"
 ```
 
 ### WebSocket Stream
@@ -262,59 +314,104 @@ On connection you receive an immediate book snapshot, then live `depthUpdate` an
 
 ## L3 Historical Replay
 
-### CLI Tool
+### Native C++ CLI Tool
 
 ```bash
-./build/release/quantengine_cli replay-l3 \
-    --input tests/fixtures/l3_sample.csv \
-    --tick-size 0.01
+# Basic replay
+./build/release/quantengine_cli replay-l3 tests/fixtures/l3_sample.csv
+
+# With Market Making strategy simulation and virtual wire latency
+./build/release/quantengine_cli replay-l3 tests/fixtures/l3_sample.csv \
+    --simulate-mm \
+    --latency-feed 1000 \
+    --latency-entry 2000 \
+    --latency-resp 1000
 ```
 
-Sample output:
+Authentic CLI Output:
 ```
-╔══════════════════════════════════════════════════════════════════╗
-║          QuantEngine L3 Historical Replay — Results              ║
-╠══════════════════════════════════════════════════════════════════╣
-║  Events processed   │ 1,000,000                                  ║
-║  Simulated fills    │ 5,432                                       ║
-║  Queue stats        │ ahead_min=0  ahead_max=12480  avg=3201      ║
-║  Virtual latency    │ feed=1µs  decision=5µs  entry=2µs          ║
-║  Realised P&L       │ +$1,240.55                                  ║
-║  Canonical hash     │ 0x3f9a4b2c1d8e7f60                          ║
-╚══════════════════════════════════════════════════════════════════╝
+=========================================================================
+            HISTORICAL L3 REPLAY & EXECUTION SIMULATION REPORT           
+=========================================================================
+ Feed Source:          tests/fixtures/l3_sample.csv
+ Events Processed:     13
+ Parse Errors Skipped: 0
+ Replay Wall Time:     0.03 ms (0.46 Mops/sec)
+ Virtual Event Span:   1200 ns (0.00 ms)
+-------------------------------------------------------------------------
+ EVENT BREAKDOWN:
+   OrderAdded (A):        6
+   OrderExecuted (E):     3
+   OrderCancelled (C):    1
+   OrderReplaced (R):     1
+   TradeMessage (T):      2
+-------------------------------------------------------------------------
+ FINAL BOOK RECONSTRUCTION:
+   Resting Orders:        4
+   Total Bid Volume:      225
+   Total Ask Volume:      125
+   Best Bid Price (Qty):  28000 (200)
+   Best Ask Price (Qty):  15050 (75)
+   Inside Market Spread:  -12950 ticks
+
++-------------------------------------------------------------------------+
+|                        ORDER BOOK DEPTH LADDER                          |
++--------------------+-----------------+-----------------+----------------+
+|   Bid Orders (Vol) |       Bid Price |       Ask Price | Ask Orders(Vol)|
++--------------------+-----------------+-----------------+----------------+
+|            1 (200) |           28000 |           15050 |         1 (75) |
+|             1 (25) |           15000 |           15075 |         1 (50) |
++--------------------+-----------------+-----------------+----------------+
+
+-------------------------------------------------------------------------
+ VIRTUAL LATENCY CONFIGURATION:
+   Feed Latency:          1000 ns
+   Entry Wire Latency:    2000 ns
+   Response Wire Latency: 1000 ns
+   Round-Trip Latency:    3000 ns
+-------------------------------------------------------------------------
+ PORTFOLIO & QUEUE SIMULATION:
+   Simulated Orders:      4
+   Active Resting:        2
+   Portfolio Realized P&L:0 ticks
+   Open Orders Tracked:   2
+-------------------------------------------------------------------------
+ DETERMINISTIC STATE & VERIFICATION:
+   Invariant Audit:       PASSED (ZERO ANOMALIES)
+   Canonical 64-bit Hash: 0x9d887bd855316601
+=========================================================================
 ```
 
 ### Python Replay Utility
 
 ```bash
-python historical_replay.py \
-    --input data/BTCUSDT_L3.csv \
+PYTHONPATH=build/release/python python3 historical_replay.py \
+    --input tests/fixtures/l3_sample.csv \
     --output replay_result.json \
     --tick-size 0.01 \
-    --snapshot-interval 50000 \
     --symbol BTCUSDT
 ```
 
 Output JSON contains throughput metrics, periodic depth snapshots, the canonical hash, and invariant verification.
 
-### L3 CSV Format
+### L3 Canonical Message Format
 
 ```csv
-timestamp_ns,event_type,order_id,side,price,quantity
-1700000000000000000,ADD,1001,B,50000.00,10
-1700000000001000000,ADD,1002,S,50100.00,5
-1700000000002000000,EXECUTE,1001,,50000.00,10
-1700000000003000000,CANCEL,1002,,,
+# Canonical QuantEngine L3 Feed Format
+A,1000000000,1001,AAPL,15000,100,B
+A,1000000100,1002,AAPL,15000,50,B
+E,1000000400,1001,AAPL,75,5001
+C,1000000600,1002,AAPL,50
+R,1000000700,1003,1005,AAPL,15025,100,S
 ```
 
-| Field | Values | Notes |
-|-------|--------|-------|
-| `timestamp_ns` | int64 | Exchange nanosecond timestamp |
-| `event_type` | `ADD` `CANCEL` `EXECUTE` `MODIFY` | |
-| `order_id` | int64 | Unique per resting order |
-| `side` | `B` `S` | Ignored for CANCEL/EXECUTE |
-| `price` | decimal | Ignored for CANCEL/EXECUTE |
-| `quantity` | int | Remaining quantity at this event |
+| Type Code | Name | Format Layout | Description |
+|-----------|------|---------------|-------------|
+| `A` | **OrderAdded** | `A,ts_ns,order_id,symbol,price_ticks,quantity,side` | New limit order inserted into the book |
+| `E` | **OrderExecuted** | `E,ts_ns,order_id,symbol,executed_qty,match_number` | Execution against resting liquidity |
+| `C` | **OrderCancelled** | `C,ts_ns,order_id,symbol,cancelled_qty` | Cancellation / withdrawal of resting volume |
+| `R` | **OrderReplaced** | `R,ts_ns,old_id,new_id,symbol,new_price,new_qty,side` | Order modification / replacement |
+| `T` | **TradeMessage** | `T,ts_ns,match_number,symbol,price,qty,aggressor_side,cond` | Public tape trade report |
 
 ---
 
@@ -369,17 +466,17 @@ QuantEngine is designed to be the fastest path from a tick data CSV to an honest
 
 ```bash
 # 1. Start the mock exchange
-python server.py --tick-size 0.01 &
+PYTHONPATH=build/release/python python3 server.py --tick-size 0.01 &
 
 # 2. Pump historical data through the engine via the replay CLI
-./build/release/quantengine_cli replay-l3 --input my_data.csv
+./build/release/quantengine_cli replay-l3 tests/fixtures/l3_sample.csv
 
 # 3. Connect your trading bot
-# python my_bot.py --host localhost --port 8080
+# python my_bot.py --host 127.0.0.1 --port 8080
 # (uses the standard Binance SDK — no modification needed)
 
 # 4. Verify determinism
-python -c "
+python3 -c "
 import quantengine as qe
 result1 = qe.ReplayEngine.replay_optimized(commands)
 result2 = qe.ReplayEngine.replay_optimized(commands)
@@ -468,17 +565,17 @@ The AGPL requires that any software that incorporates or communicates with Quant
 | `dev-sanitizer` | `-O1 -fsanitize=address,undefined` | `build/dev-sanitizer/` |
 | `dev-debug` | `-O0 -g`, full symbols | `build/debug/` |
 
-### Running Python Tests
+### Running Tests
 
 ```bash
-# Install in editable mode with dev extras
-pip install -e ".[dev]"
+# C++ Test Binary (all 248 tests)
+./build/release/tests/quantengine_tests
 
-# Run all Python tests (including server tests)
-pytest tests/python -v
+# CTest Suite (release)
+ctest --preset dev-release --output-on-failure
 
-# Run server tests only
-pytest tests/python/test_server.py -v
+# Python Tests (all 63 tests)
+PYTHONPATH=build/release/python python3 -m pytest tests/python -v
 ```
 
 ### Code Formatting
