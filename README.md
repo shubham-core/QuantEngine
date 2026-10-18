@@ -1,21 +1,62 @@
-# QuantEngine
+# ⚡ QuantEngine
+
+<p align="center">
+  <a href="assets/quantengine-demo.gif">
+    <img src="assets/quantengine-demo.gif" alt="QuantEngine Deterministic Order Book and L3 Historical Replay Demo" width="850px" />
+  </a>
+  <br>
+  <em>Live Demo: Zero-allocation intrusive doubly-linked arena matching hot path, L3 replay, and FNV-1a binary state hashing.</em>
+</p>
+
+> **A deterministic, ultra-low-latency C++20 Limit Order Book matching engine featuring a 65,536-slot intrusive arena pool, historical L3 market replay, and Binance-compatible REST/WebSocket endpoints.**
 
 <div align="center">
 
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg?logo=cplusplus)](https://en.cppreference.com/w/cpp/20)
-[![CMake](https://img.shields.io/badge/CMake-3.28%2B-blue.svg?logo=cmake)](https://cmake.org/)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-red.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![Build](https://github.com/shubham-dataeng/QuantEngine/actions/workflows/ci.yml/badge.svg)](https://github.com/shubham-dataeng/QuantEngine/actions/workflows/ci.yml)
-[![Wheels](https://github.com/shubham-dataeng/QuantEngine/actions/workflows/build-wheels.yml/badge.svg)](https://github.com/shubham-dataeng/QuantEngine/actions/workflows/build-wheels.yml)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg?logo=python)](https://python.org)
 [![Tests](https://img.shields.io/badge/tests-248%20C%2B%2B%20%7C%2063%20Python%20passing-brightgreen.svg)](#)
-[![Python](https://img.shields.io/badge/Python-3.9%20|%203.10%20|%203.11%20|%203.12-blue.svg?logo=python)](https://pypi.org/project/quantengine/)
-
-**A production-grade, deterministic C++20 Limit Order Book matching engine with a Binance-compatible REST + WebSocket exchange API.**
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-red.svg)](LICENSE)
+[![CI](https://github.com/shubham-core/QuantEngine/actions/workflows/ci.yml/badge.svg)](https://github.com/shubham-core/QuantEngine/actions)
 
 [Quickstart](#hands-on-quickstart-2-minute-walkthrough) · [Architecture](#architecture) · [Getting Started](#getting-started) · [Exchange API](#exchange-api-server) · [L3 Historical Replay](#l3-historical-replay) · [Benchmarks](#benchmarks) · [Commercial License](#commercial-licensing)
 
 </div>
 
+---
+
+### 🏛️ Architecture Pipeline
+
+```
+┌────────────────────────────────────────────────────────┐
+│ Inbound Orders / Historical L3 Tick Replay Stream      │
+│ (ADD / CANCEL / EXECUTE / MODIFY)                      │
+└───────────────────────────┬────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│ 65,536-Slot Intrusive Doubly-Linked Arena Pool         │
+│ (Pre-Allocated Node Index Array • Zero Heap Allocs)   │
+└───────────────────────────┬────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│ Deterministic Price-Level BTree & FIFO Queue Engine    │
+│ (Sub-Microsecond Price Priority Matching Hot Path)     │
+└───────────────────────────┬────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│ 64-Bit FNV-1a Canonical Binary State Hasher            │
+│ (Bit-for-Bit Cross-Engine State Verification Invariant)│
+└───────────────────────────┬────────────────────────────┘
+                            │
+         ┌──────────────────┴──────────────────┐
+         ▼                                     ▼
+┌──────────────────────────────┐   ┌──────────────────────────────┐
+│ pybind11 High-Throughput     │   │ Binance-Compatible REST &    │
+│ Python Strategy Bindings     │   │ WebSocket Server (FastAPI)   │
+└──────────────────────────────┘   └──────────────────────────────┘
+```
 ---
 
 ## Why Determinism Matters
